@@ -6,7 +6,8 @@ from .base_device import BaseDevice
 class Device(BaseDevice):
     """
     Monitor total resource intensity specifically for master_ioc.py instances.
-    Calculates aggregate CPU and Memory for all IOCs managed in screens.
+    Calculates aggregate CPU and Memory for all IOCs managed in screens,
+    excluding the ioc_heath IOC itself (which can use up to 3% CPU).
     """
 
     def __init__(self, device_name, settings):
