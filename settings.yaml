@@ -5,6 +5,11 @@ general:
   log_dir: 'logs'   # path of logs directory
   epics_addr_list: 'None'
   delay: 0.5
+ioc_load:
+  module: 'devices.ioc_load'
+  timeout: 2
+  delay: 1.0
+  channels: []
 status:   # SoftIOC to switch between target states
     module: 'devices.status_ioc'
     autostart: True
@@ -51,7 +56,6 @@ pfeiffer-26x_1:
       HIGH: 1200
       LOW: -100
       LOLO: -150
-
 pfeiffer-26x_2:
   module: 'devices.tpg_26x'
   autostart: True
