@@ -8,7 +8,7 @@ general:
 ioc_load:
   module: 'devices.ioc_load'
   timeout: 2
-  delay: 1.0
+  delay: 2
   channels: []
 status:   # SoftIOC to switch between target states
     module: 'devices.status_ioc'
