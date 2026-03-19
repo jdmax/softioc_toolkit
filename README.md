@@ -1,4 +1,4 @@
-# EPICS IOC Framework
+# EPICS IOC Framework in Python
 
 A Python-based EPICS IOC (Input/Output Controller) framework for scientific instrumentation control and data acquisition using [pythonSoftIOC](https://diamondlightsource.github.io/pythonSoftIOC/master/index.html). Designed for physics experiments requiring integration of multiple devices including temperature controllers, pressure gauges, power supplies, and motor controllers.
 
@@ -27,8 +27,11 @@ A Python-based EPICS IOC (Input/Output Controller) framework for scientific inst
 
 1. **Install dependencies**:
    ```bash
+   python -m venv venv
+   source venv/bin/activate
    pip install -r requirements.txt
    ```
+   The IOC manager script requires GNU Screen to be installed to manage IOC instances (sudo apt install screen).
 
 2. **Configure devices** in `settings.yaml`:
    ```yaml
