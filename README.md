@@ -86,6 +86,7 @@ Written in 2023-2025 by J. Maxwell (https://orcid.org/0000-0003-2710-4646).
 ## Citation
 
 Further details are available in our paper:
+
 J. Maxwell, "EPICS for small-scale laboratories with Python soft IOCs," *J. Instrum.* **21** P03030 (2026). [https://doi.org/10.1088/1748-0221/21/03/P03030](https://doi.org/10.1088/1748-0221/21/03/P03030)
 
 ## License
