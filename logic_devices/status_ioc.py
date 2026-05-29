@@ -24,13 +24,6 @@ class Device():
         self.status = self.states['options']['status']
         self.species = self.states['options']['species']
 
-#        pvlist = []
-#        for status in self.status:
-#            for pv in self.states[status]:
-#                #if isinstance(self.states[status][pv][self.species[0]], list):
-#                pvlist.append(pv)
-#        self.watchlist = set(pvlist)
-
         self.pvs['status'] = builder.mbbOut('status', *self.status, on_update_name=self.stat_update)  # come from states.yaml
         self.pvs['species'] = builder.mbbOut('species', *self.species, on_update_name=self.stat_update)
 
@@ -46,7 +39,6 @@ class Device():
         """
         Multiple Choice PV has changed for the state or species. Go through and caput changes from states file.
         """
-        #pv_name = pv.replace(self.device_name + ':', '')  # remove device name from PV to get bare pv_name
         j = self.pvs['status'].get()
         k = self.pvs['species'].get()
         status = self.states['options']['status'][j]
@@ -63,7 +55,6 @@ class Device():
                 group.append(self.try_put(pv+'.LOLO', self.states[status][pv][species][3]))
             else:
                 group.append(self.try_put(pv, self.states[status][pv][species]))
-                #await self.try_put(pv, self.states[status][pv][species])
         await asyncio.gather(*group)   # Run group concurrently
 
         # write out to file
@@ -89,8 +80,6 @@ class Device():
 
         for pv in last:      # set to PVs
             self.pvs[pv].set(last[pv])
-        #await asyncio.sleep(10)
-        #await self.stat_update(0, 'pv')  Not sure why this breaks shit
 
         print('Restored previous state:', last)
 
@@ -124,16 +113,16 @@ class Device():
                 # Check to see if the applicable conditions are satisfied
                 satisfied = True
                 if "Emptying" in stat or "Empty" in stat:
-                    for pv, l in self.states['options']['thresholds'][spec]['Empty'].items():  # go through all relevant pvs
-                        if not l[0] < curr[pv] < l[1]:   # Is this one alarming? If not 0, then yes it is.
+                    for pv, l in self.states['options']['thresholds'][spec]['Empty'].items():
+                        if not l[0] < curr[pv] < l[1]:
                             satisfied = False
                 elif "Filling" in stat:
-                    for pv, l in self.states['options']['thresholds'][spec]['Filling'].items():  # go through all relevant pvs
-                        if not l[0] < curr[pv] < l[1]:   # Is this one alarming? If not 0, then yes it is.
+                    for pv, l in self.states['options']['thresholds'][spec]['Filling'].items():
+                        if not l[0] < curr[pv] < l[1]:
                             satisfied = False
                 elif "Full" in stat:
-                    for pv, l in self.states['options']['thresholds'][spec]['Full'].items():  # go through all relevant pvs
-                        if not l[0] < curr[pv] < l[1]:   # Is this one alarming? If not 0, then yes it is.
+                    for pv, l in self.states['options']['thresholds'][spec]['Full'].items():
+                        if not l[0] < curr[pv] < l[1]:
                             satisfied = False
 
                 # Applying states and changes based on conditions
@@ -160,7 +149,6 @@ class Device():
                 else:
                     self.pvs['production'].set(0)    # Not Ready
 
-                # Add check for standby state
             except aioca.CANothing as e:
                 print("Caget error:", e)
                 self.pvs['production'].set(4, severity=2, alarm=alarm.STATE_ALARM)

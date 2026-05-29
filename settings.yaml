@@ -6,12 +6,12 @@ general:
   epics_addr_list: 'None'
   delay: 0.5
 ioc_load:
-  module: 'devices.ioc_load'
+  module: 'devices.instruments.ioc_load'
   timeout: 2
   delay: 2
   channels: []
 status:   # SoftIOC to switch between target states
-    module: 'devices.status_ioc'
+    module: 'logic_devices.status_ioc'
     autostart: True
     delay: 1
     prod_pv: True   # turn on production status PV
@@ -20,7 +20,7 @@ status:   # SoftIOC to switch between target states
         - TGT:BTARG:Cell_Bottom_TI
         - TGT:BTARG:Target_Supply_PI
 archiver:
-  module: 'devices.archiver'
+  module: 'logic_devices.archiver'
   autostart: True
   archive_path: 'archive/data'  # Directory to store archived data
   settings_file: 'settings.yaml'  # Path to settings file (optional)
@@ -30,7 +30,7 @@ archiver:
   channels:
     - None
 pfeiffer-26x_1:
-  module: 'devices.tpg_26x'
+  module: 'devices.instruments.tpg_26x'
   autostart: True
   ip: '129.57.37.103'
   port: '1001'            # channel 1 of serial to ethernet
@@ -57,7 +57,7 @@ pfeiffer-26x_1:
       LOW: -100
       LOLO: -150
 pfeiffer-26x_2:
-  module: 'devices.tpg_26x'
+  module: 'devices.instruments.tpg_26x'
   autostart: True
   ip: '129.57.37.103'
   port: '1002'            # channel 2 of serial to ethernet
@@ -75,7 +75,7 @@ pfeiffer-26x_2:
       LOW: -100
       LOLO: -150
 si9700:
-  module: 'devices.si9700'
+  module: 'devices.instruments.si9700'
   autostart: True
   ip: '129.57.37.103'
   port: '1003'            # channel 3 of serial to ethernet
@@ -112,7 +112,7 @@ si9700:
     Liquifier_Mode:
       DESC: 'Heater Mode from Liquifier Controller'
 lakeshore_218:   # Lakeshore RS232: 7 data bits, Odd parity, 1 stop bit
-  module: 'devices.ls218'
+  module: 'devices.instruments.ls218'
   autostart: True          # Should IOC Manager try to start this?
   ip: '129.57.37.111'
   port: '1002'    # channel 1 of serial to ethernet
@@ -153,7 +153,7 @@ lakeshore_218:   # Lakeshore RS232: 7 data bits, Odd parity, 1 stop bit
       LOW: 2
       LOLO: 1
 rigol_dp832:
-  module: 'devices.dp832'
+  module: 'devices.instruments.dp832'
   autostart: True          # Should IOC Manager try to start this?
   ip: '192.168.1.32'
   port: '5555'
@@ -165,7 +165,7 @@ rigol_dp832:
     - Shield_Heater
   records:
 dat8018:
-  module: 'devices.dat8018'
+  module: 'devices.instruments.dat8018'
   autostart: True          # Should IOC Manager try to start this?
   ip: '129.57.37.116'
   port: '502'
@@ -246,7 +246,7 @@ dat8018:
       LOW: 2
       LOLO: 1
 lm500:
-  module: 'devices.lm500'
+  module: 'devices.instruments.lm500'
   autostart: True          # Should IOC Manager try to start this?
   ip: '129.57.37.111'
   port: '1003'    # channel 1 of serial to ethernet
@@ -264,7 +264,7 @@ lm500:
       LOW: 40
       LOLO: 36
 cm4g_magnet:
-  module: 'devices.cm4g_magnet'
+  module: 'devices.instruments.cm4g_magnet'
   autostart: True          # Should IOC Manager try to start this?
   ip: '129.57.37.81'
   port: '4444'    # channel 1 of serial to ethernet
@@ -314,7 +314,7 @@ cm4g_magnet:
       LOW: -83
       LOLO: -85
 dat8024:
-  module: 'devices.dat8024'
+  module: 'devices.instruments.dat8024'
   autostart: True          # Should IOC Manager try to start this?
   ip: '129.57.37.132'
   port: '502'
@@ -337,7 +337,7 @@ dat8024:
       LOW: -1
       LOLO: -2
 dat8017_i:
-  module: 'devices.dat8017'
+  module: 'devices.instruments.dat8017'
   autostart: True
   ip: '129.57.37.137'
   port: '502'
@@ -357,7 +357,7 @@ dat8017_i:
       LOW: 50
       LOLO: 10
 mks937b:
-    module: 'devices.mks937b'
+    module: 'devices.instruments.mks937b'
     autostart: False          # Should IOC Manager try to start this?
     ip: '192.168.1.107'
     port: '1001'            # channel 3 of serial to ethernet
@@ -369,7 +369,7 @@ mks937b:
         - None
         - OVC_Pirani_PI
 zaber:
-    module: 'devices.zaber_motor'
+    module: 'devices.instruments.zaber_motor'
     autostart: True
     ip: '192.168.1.40'
     port: '55551'
