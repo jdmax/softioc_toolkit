@@ -25,44 +25,88 @@ A Python-based EPICS IOC (Input/Output Controller) framework for scientific inst
 
 ## Quick Start
 
-1. **Install dependencies**:
+1. **Clone with submodules**:
+   ```bash
+   git clone --recurse-submodules https://github.com/jdmax/softioc_toolkit.git
+   cd softioc_toolkit
+   # If you cloned without --recurse-submodules, run:
+   # git submodule update --init
+   ```
+
+2. **Install dependencies**:
    ```bash
    python -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
    ```
-   The IOC manager script requires GNU Screen to be installed to manage IOC instances (sudo apt install screen).
+   The IOC manager script requires GNU Screen to be installed to manage IOC instances (`sudo apt install screen`).
 
-2. **Configure devices** in `settings.yaml`:
+3. **Configure devices** in `settings.yaml`:
    ```yaml
    general:
      prefix: MYLAB
-   
+
    my_device:
-     module: 'devices.ls218'
+     module: 'devices.instruments.ls218'
      ip: '192.168.1.100'
      port: '1001'
      channels: ['Temp1', 'Temp2']
    ```
 
-3. **Start an IOC**:
+4. **Start an IOC**:
    ```bash
    python master_ioc.py -i my_device
    ```
 
-4. **View archive data**:
+5. **View archive data**:
    ```bash
    cd archive
    ./start_archive_viewer.sh
    ```
 
+## Repository Structure
+
+```
+softioc_toolkit/
+├── devices/              ← git submodule: epics-device-lib (shared instrument drivers)
+│   ├── base_device.py    ← BaseDevice ABC
+│   ├── modbus_base.py    ← ModbusDevice + ModbusConnection
+│   ├── telnet_base.py    ← TelnetDevice + TelnetConnection
+│   └── instruments/      ← concrete drivers (ls218, dat8024, zaber_motor, …)
+├── logic_devices/        ← deployment-specific drivers (not in the shared library)
+│   ├── archiver.py       ← EPICS PV archiver
+│   ├── status_ioc.py     ← experimental state machine
+│   └── states.yaml       ← alarm/setpoint table for target states
+├── master_ioc.py         ← IOC entry point
+└── settings.yaml         ← device configuration
+```
+
+Module paths in `settings.yaml` follow the package structure:
+
+| Driver type | Module path |
+|---|---|
+| Shared instrument driver | `devices.instruments.<name>` |
+| Deployment-specific driver | `logic_devices.<name>` |
+| Transport base (if referenced directly) | `devices.<base>` |
+
 ## Architecture
 
-- **Base Classes**: `BaseDevice`, `ModbusDevice`, `TelnetDevice` provide common functionality
-- **Device Drivers**: Individual modules in `devices/` folder for each instrument type
-- **Master IOC**: `master_ioc.py` handles IOC lifecycle and device instantiation
+- **Base Classes**: `BaseDevice`, `ModbusDevice`, `TelnetDevice` — defined in `devices/` (the `epics-device-lib` submodule)
+- **Instrument Drivers**: `devices/instruments/` — one module per hardware model, shared across deployments via the submodule
+- **Deployment Drivers**: `logic_devices/` — site-specific drivers (archiver, status IOC) that live only in this repo
+- **Master IOC**: `master_ioc.py` handles IOC lifecycle; loads driver modules dynamically via `importlib` using `module:` from `settings.yaml`
 - **Archiver**: Automatic data logging with configurable deadband and time intervals
 - **Status IOC**: State machine management for complex experimental procedures
+
+## Adding a New Instrument Driver
+
+New generic drivers belong in the `epics-device-lib` library, not this repo:
+
+1. Add the driver to `devices/instruments/` in the [epics-device-lib](https://github.com/jdmax/epics-device-lib) repo, commit, and tag a new version.
+2. Update the submodule pin here: `cd devices && git checkout <new-tag> && cd .. && git add devices && git commit`
+3. Add the corresponding `module: 'devices.instruments.<name>'` entry to `settings.yaml`.
+
+For drivers that are specific to this deployment, add them to `logic_devices/` instead.
 
 ## Configuration
 
