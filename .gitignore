@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.claude/
+archive/
+logs/
+last.yaml
