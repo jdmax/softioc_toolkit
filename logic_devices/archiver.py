@@ -7,7 +7,7 @@ import csv
 import os
 from pathlib import Path
 from softioc import builder
-from .base_device import BaseDevice
+from devices.base_device import BaseDevice
 import yaml
 
 
@@ -293,7 +293,6 @@ class Device(BaseDevice):
                 pv_data['value'] = value
                 pv_data['timestamp'] = current_time
                 pv_data['last_write'] = current_time
-                #print("Writing", pv_name, value, current_time)
 
         except Exception as e:
             print(f"Error handling update for {pv_name}: {e}")
