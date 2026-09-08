@@ -98,6 +98,97 @@ Module paths in `settings.yaml` follow the package structure:
 - **Archiver**: Automatic data logging with configurable deadband and time intervals
 - **Status IOC**: State machine management for complex experimental procedures
 
+## Creating a New Deployment
+
+This repository is both a working IOC deployment and the starting point for new ones. A
+deployment is this framework plus the configuration for one lab or experiment: the PV prefix,
+the device list in `settings.yaml`, any site-specific drivers in `logic_devices/`, and the
+CS-Studio/Phoebus screens in `gui/`. None of the framework code needs to be renamed — the
+prefix is read from `settings.yaml` at runtime — so a new deployment is a clone with its own
+configuration and its own GitHub repository.
+
+### 1. Clone and rename
+
+```bash
+git clone --recurse-submodules https://github.com/jdmax/softioc_toolkit.git mylab_ioc
+cd mylab_ioc
+```
+
+### 2. Decide what to do with the history
+
+Start a fresh history if the new deployment should not carry this repository's commits:
+
+```bash
+rm -rf .git
+git init
+git submodule add https://github.com/jdmax/epics-device-lib.git devices
+git add .
+git commit -m "Initial commit: new deployment from softioc_toolkit"
+```
+
+Alternatively, keep the history and simply repoint the remote (see step 3). Keeping it makes it
+easy to merge later framework updates; discarding it gives a clean log for the new lab.
+
+### 3. Create the GitHub repository
+
+```bash
+gh repo create <org>/mylab_ioc --private --source=. --remote=origin --push
+```
+
+Or create the repository through the GitHub web interface and point this clone at it:
+
+```bash
+git remote set-url origin https://github.com/<org>/mylab_ioc.git   # or: git remote add origin ...
+git push -u origin main
+```
+
+If you kept the original history, also keep a link to the framework so improvements can be
+pulled in later:
+
+```bash
+git remote add upstream https://github.com/jdmax/softioc_toolkit.git
+git fetch upstream
+git merge upstream/main        # when you want framework updates
+```
+
+### 4. Configure the deployment
+
+| What to change | Where | Notes |
+|---|---|---|
+| PV prefix | `settings.yaml` → `general.prefix` | Prefixes every PV; used by `master_ioc.py`, `ioc_manager.py`, and `tools/ioc_cli.py` |
+| Device list | `settings.yaml` | Delete the example devices, then add one top-level key per IOC with its `module`, `ip`, `port`, `channels`, and `records` |
+| Archiver | `settings.yaml` → `archiver` | Set `archive_path`, `deadband`, `time_increment` |
+| Status IOC | `settings.yaml` → `status` and `logic_devices/states.yaml` | Update `full_status` PVs and the state/alarm table, or remove the `status` block entirely if the deployment has no state machine |
+| Site-specific drivers | `logic_devices/` | Keep `archiver.py` and `status_ioc.py`; add or remove others as needed |
+| Operator screens | `gui/` | `liquifier.bob` is specific to this deployment — replace it with your own screens; `archive.bob` is generic |
+| Logging | `settings.yaml` → `general.log_dir`, `epics_addr_list` | `logs/` and `archive/data/` are gitignored and created at runtime |
+| Project identity | `README.md`, `LICENSE` | Describe the new deployment and set the correct copyright holder |
+
+### 5. Keep the shared driver library shared
+
+The `devices/` submodule stays pointed at
+[epics-device-lib](https://github.com/jdmax/epics-device-lib) — do not fork it per deployment.
+New generic instrument drivers belong upstream in that library so every deployment benefits;
+each deployment pins the submodule to whichever tag it has been tested against:
+
+```bash
+cd devices && git fetch --tags && git checkout <tag> && cd ..
+git add devices && git commit -m "Pin epics-device-lib to <tag>"
+```
+
+Only drivers that make no sense outside this one deployment go in `logic_devices/`.
+
+### 6. Verify
+
+```bash
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python master_ioc.py -i <device_name>      # start one IOC in the foreground
+caget <PREFIX>:<DEVICE>:<CHANNEL>          # confirm the PVs appear
+./start_ioc_manager.sh                     # start all autostart IOCs under screen
+./commander.sh                             # curses monitor for the running IOCs
+```
+
 ## Adding a New Instrument Driver
 
 New generic drivers belong in the `epics-device-lib` library, not this repo:
