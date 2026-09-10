@@ -1,0 +1,14 @@
+[Unit]
+Description=Vaunix Lab Brick TCP shim
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/bin/python3 /opt/vaunix_shim/vaunix_shim.py --port 1701
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

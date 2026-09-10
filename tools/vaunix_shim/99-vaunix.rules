@@ -1,0 +1,4 @@
+# Vaunix Lab Brick: let the shim's user open the device without root.
+# Fill in the real IDs from `lsusb` before installing this file.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="YYYY", MODE="0666"
+KERNEL=="hidraw*", ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="YYYY", MODE="0666"
