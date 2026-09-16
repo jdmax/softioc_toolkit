@@ -390,3 +390,44 @@ zaber:
     check_home:    # should it run the home routine before each move
         Shutoff: False
         Flag: True
+bridge12_mw:   # Vaunix Lab Brick LMS via the TCP shim on the Pi (tools/vaunix_shim)
+    module: 'devices.instruments.vaunix_lms'
+    autostart: True
+    ip: '192.168.1.50'      # the Raspberry Pi holding the USB connection
+    port: '1701'
+    timeout: 2
+    delay: 1
+    multiplier: 1           # multiplier-chain factor for the _OutFI PV; 1 = synth output used directly
+    channels:
+        - MW
+    records:
+        MW_FI:
+            DESC: 'Synth Frequency'
+            PREC: 6
+            EGU: 'GHz'
+        MW_FC:
+            DESC: 'Synth Frequency SP'
+            PREC: 6
+            EGU: 'GHz'
+            DRVH: 20.0      # clamp to the device range; read LIMITS? from the shim to confirm
+            DRVL: 0.2
+        MW_OutFI:
+            DESC: 'Output Frequency'
+            PREC: 6
+            EGU: 'GHz'
+        MW_PWRI:
+            DESC: 'Output Power'
+            PREC: 2
+            EGU: 'dBm'
+        MW_PWRC:
+            DESC: 'Output Power SP'
+            PREC: 2
+            EGU: 'dBm'
+            DRVH: 10.0      # keep well under whatever the amplifier can take
+            DRVL: -40.0
+        MW_RF:
+            DESC: 'RF Output Enable'
+        MW_Ref:
+            DESC: 'Use Internal Reference'
+        MW_Lock:
+            DESC: 'PLL Locked'

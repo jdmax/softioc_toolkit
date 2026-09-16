@@ -9,7 +9,7 @@ A Python-based EPICS IOC (Input/Output Controller) framework for scientific inst
 - **Data Archiving**: Built-in data logging with deadband logic and web-based viewer
 - **Status Management**: Automated state machine for experimental procedures
 - **GUI Integration**: CS-Studio/Phoebus display files included
-- **IOC Management**: Centralized control of multiple IOC instances
+- **IOC Management**: Centralized control of multiple IOC instances, over EPICS (`ioc_manager.py`) or from a terminal (`tools/ioc_cli.py`)
 
 ## Example Devices
 
@@ -68,6 +68,11 @@ A Python-based EPICS IOC (Input/Output Controller) framework for scientific inst
 
 ```
 softioc_toolkit/
+├── master_ioc.py         ← IOC entry point: runs one device IOC (`-i <name>`)
+├── ioc_manager.py        ← manager IOC: start, stop and reset the other IOCs over EPICS
+├── settings.yaml         ← device configuration (one top-level key per IOC)
+├── start_ioc_manager.sh  ← run ioc_manager.py in a detached screen session
+├── commander.sh          ← run the Commander TUI (tools/ioc_cli.py)
 ├── devices/              ← git submodule: epics-device-lib (shared instrument drivers)
 │   ├── base_device.py    ← BaseDevice ABC
 │   ├── modbus_base.py    ← ModbusDevice + ModbusConnection
@@ -77,8 +82,15 @@ softioc_toolkit/
 │   ├── archiver.py       ← EPICS PV archiver
 │   ├── status_ioc.py     ← experimental state machine
 │   └── states.yaml       ← alarm/setpoint table for target states
-├── master_ioc.py         ← IOC entry point
-└── settings.yaml         ← device configuration
+├── tools/                ← operator tools and benchmarks
+│   ├── ioc_cli.py        ← Commander: curses TUI for IOCs, PVs and logs
+│   ├── latency_test.py   ← caput → callback round-trip latency benchmark
+│   ├── stress_test.py    ← burst-write throughput benchmark
+│   └── vaunix_shim/      ← USB-to-TCP shim for Vaunix Lab Bricks (runs on a Pi)
+├── archive/              ← archived CSV data plus the Streamlit archive viewer
+│   ├── archive_viewer.py
+│   └── start_archive_viewer.sh
+└── gui/                  ← CS-Studio/Phoebus screens (.bob)
 ```
 
 Module paths in `settings.yaml` follow the package structure:
@@ -95,8 +107,86 @@ Module paths in `settings.yaml` follow the package structure:
 - **Instrument Drivers**: `devices/instruments/` — one module per hardware model, shared across deployments via the submodule
 - **Deployment Drivers**: `logic_devices/` — site-specific drivers (archiver, status IOC) that live only in this repo
 - **Master IOC**: `master_ioc.py` handles IOC lifecycle; loads driver modules dynamically via `importlib` using `module:` from `settings.yaml`
+- **IOC Manager**: `ioc_manager.py` is itself an IOC that starts, stops and resets every other IOC in GNU Screen sessions, and publishes a heartbeat for each
+- **Commander**: `tools/ioc_cli.py` is a curses terminal interface over the same screen sessions, for operators who want a console instead of PVs
 - **Archiver**: Automatic data logging with configurable deadband and time intervals
 - **Status IOC**: State machine management for complex experimental procedures
+
+## Running IOCs
+
+Each top-level key in `settings.yaml` (everything but `general`) defines one IOC. There are
+three ways to run them, all of which end up calling `master_ioc.py -i <name>`.
+
+### Directly, in the foreground
+
+```bash
+python master_ioc.py -i pfeiffer-26x_1
+```
+
+The IOC runs in the current terminal and drops into the `softioc` interactive shell, where
+`softioc.dbl()` lists its PVs. This is the way to bring up a new device or debug a driver.
+
+### With the IOC manager
+
+`ioc_manager.py` is an IOC whose job is running the other IOCs. It creates a
+`<PREFIX>:MAN` device with, for every IOC in `settings.yaml`:
+
+| PV | Type | Meaning |
+|---|---|---|
+| `<PREFIX>:MAN:<name>_control` | mbbOut | `0` Stop, `1` Run, `2` Reset |
+| `<PREFIX>:MAN:<name>_hb` | mbbOut | Seconds since that IOC last updated its `_time` PV |
+| `<PREFIX>:MAN:all` | mbbOut | Applies Stop/Run/Reset to every IOC with `autostart: True` |
+
+Each IOC is started in its own detached GNU Screen session named after the settings key, with
+the session log written to `general.log_dir`. The manager scrapes that log for the IOC's PV
+names and uses the heartbeat PVs to notice IOCs that have stopped responding.
+
+```bash
+./start_ioc_manager.sh                  # manager itself, in a screen session named "ioc-manager"
+caput MYLAB:MAN:all 1                   # start everything marked autostart
+caput MYLAB:MAN:pfeiffer-26x_1_control 0   # stop one IOC
+screen -r pfeiffer-26x_1                # attach to a running IOC
+```
+
+GNU Screen is required (`sudo apt install screen`).
+
+### With the Commander TUI
+
+```bash
+./commander.sh          # == python tools/ioc_cli.py
+```
+
+Commander is a curses interface to the same screen sessions, and does not require the IOC
+manager to be running — it can start and stop IOCs itself, and can also start, stop and
+restart the manager. The main view lists every IOC with its run state and heartbeat; from
+there:
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Select an IOC |
+| `Enter` | View that IOC's PVs, with live values and alarm severity; `Enter` again sets a writable PV |
+| `p` | View all active PVs across all running IOCs |
+| `s` / `x` / `r` | Start / stop / restart the selected IOC |
+| `l` | Tail the selected IOC's log |
+| `a` | Attach to its screen session (returns to Commander on detach) |
+| `S` / `X` | Start all autostart IOCs / stop all running IOCs |
+| `m` / `M` / `R` | Start / stop / restart the IOC manager |
+| `?` | Help page |
+| `q` / `Esc` | Quit, or go back from a sub-view |
+
+PV values are read over Channel Access with `aioca`, so Commander can run on any machine on
+the EPICS subnet, but the start/stop keys only work where the screen sessions live.
+
+## Tools
+
+The `tools/` directory holds everything that is not part of an IOC itself:
+
+- **`ioc_cli.py`** — the Commander TUI described above. Launched by `commander.sh`.
+- **`latency_test.py`** — writes random values to a target PV and measures the round-trip time
+  to the monitor callback. Set `TARGET_PV` and `ITERATIONS` at the top of the file.
+- **`stress_test.py`** — fires a burst of back-to-back writes at a PV and reports the latency
+  distribution, to find where an IOC's update loop starts falling behind.
+
 
 ## Creating a New Deployment
 
