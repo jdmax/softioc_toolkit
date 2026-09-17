@@ -1,36 +1,39 @@
 # J. Maxwell 2023
-from screenutils import Screen
+import asyncio
+import datetime
+import os
+import shlex
+import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import aioca
 import yaml
 from softioc import softioc, builder, asyncio_dispatcher
-import asyncio
-import re
-import time
-import os.path
-import subprocess
-from threading import Thread
-import aioca
-import datetime
+
+import ioc_common
+
+# Commands on the _control and all PVs
+STOP, RUN, RESET = 0, 1, 2
+# States of the _status PVs
+STOPPED, STARTING, RUNNING, STALE, FAILED, STOPPING = range(6)
 
 
 async def main():
     """
     IOC to manage IOCS. Sets up PVs for each IOC in settings file to allow starting and stopping.
-    Uses Unix Screen to run master_ioc for each device IOC.
+    Uses Unix Screen to run master_ioc for each device IOC. This is the only thing that starts or stops IOC screens.
     """
-
-    with open('settings.yaml') as f:  # Load settings from YAML config file
-        settings = yaml.load(f, Loader=yaml.FullLoader)
-
-    os.environ['EPICS_CA_ADDR_LIST'] = settings['general']['epics_addr_list']
-    #os.environ['EPICS_CAS_BEACON_ADDR_LIST'] = settings['general']['epics_beacon_addr_list']
-    os.environ['EPICS_CA_AUTO_ADDR_LIST'] = 'NO'
-    #os.environ['EPICS_CAS_AUTO_BEACON_ADDR_LIST'] = 'NO'
+    with open(os.path.join(ioc_common.PROJECT_ROOT, 'settings.yaml')) as f:  # Load settings from YAML config file
+        settings = yaml.safe_load(f)
+    ioc_common.apply_ca_env(settings)
 
     dispatcher = asyncio_dispatcher.AsyncioDispatcher()
     device_name = settings['general']['prefix'] + ':MAN'
     builder.SetDeviceName(device_name)
 
-    i = IOCManager(device_name, settings)
+    i = IOCManager(device_name, settings, dispatcher.loop)
     builder.LoadDatabase()
     softioc.iocInit(dispatcher)
 
@@ -44,181 +47,223 @@ async def main():
 
 class IOCManager:
     """
-    Handles screens which run iocs. Makes PVs to control each ioc.
+    Handles screens which run iocs. Makes PVs to control and monitor each ioc.
     """
 
-    def __init__(self, device_name, settings):
+    def __init__(self, device_name, settings, loop):
         """
-        Make control PVs for each IOC. "pvs" dict is keyed on name (e.g. flow), PV is labeled as name + 'control' (e.g. flow_control)
+        Make PVs for each IOC in the settings, keyed by IOC name:
+            <name>_control  Stop/Run/Reset command, reads back as the last applied state
+            <name>_status   Stopped, Starting, Running, Stale, Failed or Stopping
+            <name>_msg      Short description of the status
+            <name>_hb       Seconds since the IOC last updated its _time PV
         """
         self.device_name = device_name
         self.settings = settings
+        self.loop = loop     # dispatcher event loop, for CA calls from worker threads
+        self.names = [name for name in settings if name != 'general']
         self.delay = settings['general']['delay']
-        self.pvs = {}
-        self.screens = {}     # Dict of all screens made for the iocs, keyed by screen name
-        self.ioc_pvs = {}  # Dict of lists of all PVs in each screen instance, keyed by screen name
+        self.start_timeout = settings['general'].get('start_timeout', 30)
 
+        self.control = {}
+        self.status = {}
+        self.msg = {}
+        self.hb = {}
+        self.last_update = {}   # last _time value read from each IOC
+        self.workers = {}       # one thread per IOC, so its commands run in the order they arrive
+        self.pending = {}       # number of queued or running commands per IOC
+        self.finished = {}      # number of completed commands per IOC
+        self.lock = threading.Lock()
 
-        for name in settings.keys():  # each IOC has controls to start, stop or reset
-            if 'general' in name: continue
-            self.pvs[name] = builder.mbbOut(name + '_control',
-                                           ("Stop",'MINOR'),
-                                           ("Run", 0),
-                                           ("Reset",'MINOR'),
-                                           on_update_name=self.screen_update
-                                           )
-            self.pvs[name+'_hb'] = builder.mbbOut(name+'_hb')
-            #setattr(self.pvs[name+'_hb'], 'HIGH', 10)
-            #setattr(self.pvs[name+'_hb'], 'LOW', 1)
-            self.pvs[name].set(0)
+        for name in self.names:
+            self.control[name] = builder.mbbOut(f'{name}_control',
+                                                ("Stop", 'MINOR'),
+                                                ("Run", 0),
+                                                ("Reset", 'MINOR'),
+                                                always_update=True,   # so Run works on a crashed IOC still showing Run
+                                                on_update=lambda i, name=name: self.request(name, i))
+            self.status[name] = builder.mbbIn(f'{name}_status',
+                                              ("Stopped", 0),
+                                              ("Starting", 0),
+                                              ("Running", 0),
+                                              ("Stale", 'MINOR'),
+                                              ("Failed", 'MAJOR'),
+                                              ("Stopping", 0))
+            self.msg[name] = builder.stringIn(f'{name}_msg', initial_value='')
+            stale = self.stale_after(name)
+            self.hb[name] = builder.longIn(f'{name}_hb', EGU='s', HIGH=stale, HSV='MINOR')
+            self.workers[name] = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
+            self.pending[name] = 0
+            self.finished[name] = 0
+
         self.pv_all = builder.mbbOut('all',
-                                       ("Stop",'MINOR'),
-                                       ("Run", 0),
-                                       ("Reset",'MINOR'),
-                                       on_update=self.all_screen_update
-                                       )
-        self.pv_all.set(0)
-        #self.pv_pid = builder.mbbOut('pids',
-        #                               ("Stop",'MINOR'),
-        #                               ("Run", 0),
-        #                               ("Reset",'MINOR'),
-        #                               on_update=self.pid_update
-        #                               )
-        #self.pv_pid.set(0)
+                                     ("Stop", 'MINOR'),
+                                     ("Run", 0),
+                                     ("Reset", 'MINOR'),
+                                     always_update=True,
+                                     on_update=self.request_all)
+        self.pv_time = builder.aIn('time')   # manager's own heartbeat
+        self.pv_time.set(datetime.datetime.now().timestamp())
 
-        self.ioc_regex = re.compile(f'{device_name}')
+    def stale_after(self, name):
+        """Seconds without an update before an IOC counts as stale; settable per IOC with stale_after"""
+        delay = self.settings[name].get('delay', self.delay)
+        return int(self.settings[name].get('stale_after', max(3 * delay, delay + 10)))
 
-        #self.pid_update(1)
-
-    def screen_update(self, i, pv):
+    # ── Commands ───────────────────────────────────────────────────────────────
+    def request(self, name, command):
         """
-        Multiple Choice PV has changed for the given control PV. Follow command. 0=Stop, 1=Start, 2=Reset
+        Control PV was written: 0=Stop, 1=Run, 2=Reset. Queue it on the IOC's worker thread,
+        so the IOC loop never waits on screen.
         """
-        pv_name = pv.replace(self.device_name + ':', '')  # remove device name from PV to get bare pv_name
-        if i==0:
-            self.stop_ioc(pv_name)
-        elif i==1:
-            if Screen(pv_name).exists:
-                self.reset_ioc(pv_name)   # if it already exists, restart it instead
-                #pass        # if it already exists, do nothing
-            else:
-                self.start_ioc(pv_name)
-        elif i==2:
-            self.reset_ioc(pv_name)
+        with self.lock:
+            self.pending[name] += 1
+        self.workers[name].submit(self.run_command, name, command)
 
-    def all_screen_update(self, i):
-        """
-        Do update for all iocs in config file with autostart set to True.
-        """
-        for name in self.settings.keys():
-            if 'general' in name: continue
-            if self.settings[name]['autostart']:
-                #self.screen_update(i, pv)
-                self.pvs[name].set(i)
+    def request_all(self, command):
+        """Stop every IOC, or Run or Reset every IOC with autostart set to True."""
+        for name in self.names:
+            if command == STOP or self.settings[name].get('autostart', False):
+                self.request(name, command)
 
-    def start_ioc(self, pv_name):
-        """
-        Start screen to run ioc, then run ioc. Get PV names from IOC after run.
-        """
-        name = pv_name.replace('_control', '')  # remove suffix from pv name to name screen
-
-        self.st = StartThread(self, name, self.screens)
-        self.st.daemon = True
-        self.st.start()
-
-
-    def stop_ioc(self, pv_name):
-        """
-        Kill screen and ioc running within it.
-        """
-        name = pv_name.replace('_control', '')  # remove suffix from pv name to name screen
-        if Screen(name).exists:
-            subprocess.run(["screen","-XS",name,"kill"])
-            self.pvs[name].set(0)
-        if name in self.screens:
-            del self.screens[name]
-
-    def reset_ioc(self, pv_name):
-        """
-        Kill screen and ioc running within it, then restart.
-        """
-        name = pv_name.replace('_control', '')  # remove suffix from pv name to name screen
-
-        self.stop_ioc(pv_name)
-        time.sleep(1)
-        self.start_ioc(pv_name)
-
-    def pid_update(self, i):
-        '''Start and stop the PID IOC '''
-        if i==0:
-            if Screen('pids').exists:
-                subprocess.run(["screen","-XS",'pids',"kill"])
-            self.pv_pid.set(0)
-        elif i==1:
-            screen = Screen('pids', True)
-            screen.send_commands(f'python pid/pids.py')
-        elif i==2:
-            if Screen('pids').exists:
-                subprocess.run(["screen","-XS",'pids',"kill"])
-            screen = Screen('pids', True)
-            screen.send_commands(f'python pid/pids.py')
-
-    async def heartbeat(self):
-        """Check last time written versus current time for each IOC"""
-        group = []
-        await asyncio.sleep(self.delay)
-        for name in self.screens:
-            group.append(self.time_check(name))
-        await asyncio.gather(*group)
-
-    async def time_check(self, name):
+    def run_command(self, name, command):
         try:
-            t = await aioca.caget(f"{self.device_name}:{name}_time")
-            now = datetime.datetime.now().timestamp()
-            self.pvs[name+'_hb'].set(int(now - float(t)))
-        except aioca.CANothing as e:
-            print("Get error:", e, f"{self.device_name}:{name}_time")
+            if command == STOP:
+                self.stop_ioc(name)
+            elif command == RUN:
+                self.start_ioc(name)
+            elif command == RESET:
+                if self.stop_ioc(name):
+                    self.start_ioc(name)
+        except Exception as e:
+            print(f"{name}: command {command} failed: {e}")
+            self.set_status(name, FAILED, str(e))
+        finally:
+            with self.lock:
+                self.pending[name] -= 1
+                self.finished[name] += 1
 
-class StartThread(Thread):
-    '''Thread to interact with IOCs in screens. Each thread starts one ioc.'''
+    def start_ioc(self, name):
+        """
+        Start screen to run ioc, then run ioc. Wait until it answers over CA, then list its PVs into the log.
+        """
+        if name in ioc_common.screen_sessions():
+            self.control[name].set(RUN, process=False)   # already running, nothing to do
+            return
+        self.set_status(name, STARTING, 'Starting')
+        command = shlex.join([sys.executable, 'master_ioc.py', '-i', name])
+        if not ioc_common.start_session(name, command, ioc_common.log_path(self.settings, name)):
+            self.control[name].set(STOP, process=False)
+            self.set_status(name, FAILED, 'Could not create screen session')
+            return
 
-    def __init__(self, parent, name, screens):
-        Thread.__init__(self)
-        self.parent = parent
-        self.name = name
-        self.screens = screens
+        self.control[name].set(RUN, process=False)
+        if self.wait_for_ioc(name):
+            ioc_common.send_to_session(name, 'softioc.dbl()')   # PV list goes into the log for Commander
+            self.set_status(name, RUNNING, 'Running')
+        elif name in ioc_common.screen_sessions():
+            # Leave the session up so the error can be read in the log or by attaching
+            self.set_status(name, FAILED, f'No response after {self.start_timeout} s, see log')
+        else:
+            self.control[name].set(STOP, process=False)
+            self.set_status(name, FAILED, 'Screen session ended, see log')
 
-    def run(self):
-        '''
-        Start screen to run ioc, then run ioc. Wait until started, then get PV names from IOC after run.
-        '''
-        screen = Screen(self.name, True)
-        screen.send_commands('bash')
-        screen.send_commands(f'python master_ioc.py -i {self.name}')
-        screen.enable_logs(f"{self.parent.settings['general']['log_dir']}/{self.name}")
-        screen.send_commands('softioc.dbl()')
+    def stop_ioc(self, name):
+        """
+        Kill screen and ioc running within it. Returns True if it is stopped.
+        """
+        if name in ioc_common.screen_sessions():
+            self.set_status(name, STOPPING, 'Stopping')
+            if not ioc_common.kill_session(name):
+                self.set_status(name, FAILED, 'Screen session did not stop')
+                return False
+        self.control[name].set(STOP, process=False)
+        self.hb[name].set(0)
+        self.last_update.pop(name, None)
+        self.set_status(name, STOPPED, 'Stopped')
+        return True
 
-        elapsed = 0
-        pvs = []
-        while True:           # wait until ioc starts to get response
-            #print("Waiting for logfile for", self.name)
-            if os.path.getsize(f"{self.parent.settings['general']['log_dir']}/{self.name}") > 10:
-                with open(f"{self.parent.settings['general']['log_dir']}/{self.name}") as f:
-                    for line in f:
-                        match = re.search(f"({self.parent.settings['general']['prefix']}.+)"+r'\s', line)
-                        if match:
-                            pvs.append(match.group(1))
-                self.parent.ioc_pvs[self.name] = pvs   # send the list of pvs back to manager
-                self.parent.pvs[self.name].set(1)
-                break
-            time.sleep(1)
-            elapsed += 1
-            if elapsed > 20:
-                print(f"Failed to start {self.name} ioc, died waiting on log file after {elapsed} seconds.")
-                break
+    def wait_for_ioc(self, name):
+        """Wait for the IOC's _time PV to answer. Returns False on timeout or if its session ends."""
+        deadline = time.monotonic() + self.start_timeout
+        while time.monotonic() < deadline:
+            if name not in ioc_common.screen_sessions():
+                return False
+            t = asyncio.run_coroutine_threadsafe(self.get_time(name), self.loop).result()
+            if t is not None:
+                self.last_update[name] = t
+                return True
+            time.sleep(0.5)
+        return False
 
-        self.screens[self.name] = screen
+    def set_status(self, name, state, message):
+        """Set status and message PVs, only posting changes"""
+        if self.status[name].get() != state:
+            self.status[name].set(state)
+        message = message[:39]   # stringin holds 40 characters including the terminator
+        if self.msg[name].get() != message:
+            self.msg[name].set(message)
 
+    # ── Monitoring ─────────────────────────────────────────────────────────────
+    async def heartbeat(self):
+        """
+        Check last time written versus current time for each IOC, and bring status PVs in line with the
+        screen sessions. Sessions already running when the manager starts are picked up here.
+        """
+        await asyncio.sleep(self.delay)
+        self.pv_time.set(datetime.datetime.now().timestamp())
+
+        with self.lock:   # skip IOCs with a command in progress, the worker owns their status
+            idle = {n: self.finished[n] for n in self.names if self.pending[n] == 0}
+        sessions = await asyncio.to_thread(ioc_common.screen_sessions)
+        running = [n for n in idle if n in sessions]
+        times = await asyncio.gather(*(self.get_time(n) for n in running))
+        times = dict(zip(running, times))
+        now = datetime.datetime.now().timestamp()
+
+        with self.lock:   # drop any IOC that had a command arrive while we were looking
+            idle = [n for n in idle if self.pending[n] == 0 and self.finished[n] == idle[n]]
+
+        for name in idle:
+            if name in sessions:
+                self.check_running(name, times[name], now)
+            else:
+                self.check_stopped(name)
+
+    def check_running(self, name, t, now):
+        if self.control[name].get() != RUN:
+            self.control[name].set(RUN, process=False)
+        if t is not None:
+            self.last_update[name] = t
+        if name in self.last_update:
+            age = int(now - self.last_update[name])
+            self.hb[name].set(age)
+        else:
+            age = None
+
+        if t is None:
+            if self.status[name].get() != FAILED:   # a failed start stays failed until it answers
+                self.set_status(name, STALE, 'No response over CA')
+        elif age > self.stale_after(name):
+            self.set_status(name, STALE, f'No update for {age} s')
+        else:
+            self.set_status(name, RUNNING, 'Running')
+
+    def check_stopped(self, name):
+        if self.control[name].get() != STOP:
+            self.control[name].set(STOP, process=False)
+        self.last_update.pop(name, None)
+        state = self.status[name].get()
+        if state in (RUNNING, STALE, STARTING, STOPPING):
+            self.hb[name].set(0)
+            self.set_status(name, STOPPED, 'Screen session ended')
+
+    async def get_time(self, name):
+        """Read the IOC's _time PV, or None if it doesn't answer"""
+        try:
+            return float(await aioca.caget(f"{self.device_name}:{name}_time", timeout=1))
+        except aioca.CANothing:
+            return None
 
 
 if __name__ == "__main__":

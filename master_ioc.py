@@ -4,8 +4,8 @@ import asyncio
 import yaml
 import argparse
 import importlib
-import os
 import datetime
+import ioc_common
 
 
 async def main():
@@ -16,9 +16,7 @@ async def main():
     """
     ioc, settings = load_settings()
 
-    if 'None' not in settings['general']['epics_addr_list']:
-        os.environ['EPICS_CA_ADDR_LIST'] = settings['general']['epics_addr_list']
-        os.environ['EPICS_CA_AUTO_ADDR_LIST'] = 'NO'
+    ioc_common.apply_ca_env(settings)
 
     dispatcher = asyncio_dispatcher.AsyncioDispatcher()
     device_name = settings['general']['prefix']
