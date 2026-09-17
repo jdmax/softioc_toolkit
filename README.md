@@ -70,7 +70,7 @@ A Python-based EPICS IOC (Input/Output Controller) framework for scientific inst
 softioc_toolkit/
 ├── master_ioc.py         ← IOC entry point: runs one device IOC (`-i <name>`)
 ├── ioc_manager.py        ← manager IOC: start, stop and reset the other IOCs over EPICS
-├── ioc_common.py         ← settings, Channel Access and screen helpers shared by the scripts above
+├── ioc_common.py         ← screen session, log path and Channel Access helpers shared by the scripts above
 ├── settings.yaml         ← device configuration (one top-level key per IOC)
 ├── start_ioc_manager.sh  ← run ioc_manager.py in a detached screen session
 ├── commander.sh          ← run the Commander TUI (tools/ioc_cli.py)

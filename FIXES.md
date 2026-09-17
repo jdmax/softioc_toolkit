@@ -14,6 +14,15 @@ if a line number no longer matches.
 - The project runs on Linux (`screen`, `curses`). There is no test suite. At a minimum, run
   `python -m py_compile <file>` after each edit. Anything involving screen sessions, curses or
   Channel Access has to be checked on the Linux IOC host.
+- Testing on the Windows development machine: WSL (Ubuntu) has `screen` and `python3`, and CA
+  works there without setting an address list. Corporate TLS interception blocks `pip` inside
+  WSL, so download Linux wheels from the Windows venv and install them offline:
+  `.venv/Scripts/python.exe -m pip download -d <dir> --platform manylinux2014_x86_64
+  --python-version 3.10 --only-binary=:all: softioc aioca pyyaml pip`, then in WSL
+  `python3 -m venv --without-pip <venv>`, `<venv>/bin/python <dir>/pip-*.whl/pip install
+  --no-index <dir>/pip-*.whl` and `<venv>/bin/pip install --no-index -f <dir> softioc aioca pyyaml`.
+  Test in a copy of the repo under `/tmp` with a fake device driver and a test `settings.yaml`,
+  so logs and sessions don't touch the real project.
 - The `devices/` submodule (epics-device-lib) was not reviewed beyond `base_device.py`,
   `telnet_base.py` and `modbus_base.py`. Don't edit it from this repo.
 
@@ -21,8 +30,10 @@ if a line number no longer matches.
 
 `ioc_manager.py` was rewritten, and `tools/ioc_cli.py` (Commander) now starts, stops and restarts
 IOCs by writing to the manager's PVs. Commander still runs on the manager's host, reads logs,
-attaches to sessions, and starts and stops the manager's own session. The screen, settings and
-Channel Access helpers moved into a new `ioc_common.py`, and `screenutils` is no longer used.
+attaches to sessions, and starts and stops the manager's own session. The screen session, log
+path and Channel Access helpers moved into a new `ioc_common.py`, and `screenutils` is no
+longer used. Each script still reads `settings.yaml` itself; that was a deliberate choice, so
+don't move it into `ioc_common.py`.
 The README describes the new manager PVs (`_status`, `_msg`, `longIn` `_hb`, `time`) and
 behaviour.
 
